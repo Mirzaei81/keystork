@@ -1,0 +1,121 @@
+name: Android NDK CMake Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  ANDROID_COMPILE_SDK: "36"
+  ANDROID_BUILD_TOOLS: "36.0.0"
+  ANDROID_NDK_VERSION: "29.0.14206865"
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  ANDROID_HOME: /usr/local/lib/android/sdk
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------
+      # 1. Install JDK (required by sdkmanager)
+      # ---------------------------------------------------------------
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ---------------------------------------------------------------
+      # 2. Set up Android SDK (pre-installed on ubuntu-latest runner)
+      # ---------------------------------------------------------------
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
+          packages: ''
+
+      # ---------------------------------------------------------------
+      # 3. Install NDK, platform, and build-tools via sdkmanager
+      # ---------------------------------------------------------------
+      - name: Install NDK, Platform, and Build-Tools
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager \
+            "ndk;${ANDROID_NDK_VERSION}" \
+            "platforms;android-${ANDROID_COMPILE_SDK}" \
+            "build-tools;${ANDROID_BUILD_TOOLS}"
+
+      # ---------------------------------------------------------------
+      # 4. Export ANDROID_HOME / ANDROID_SDK_ROOT / ANDROID_NDK_ROOT
+      #    persistently to $GITHUB_ENV so later steps can use them
+      # ---------------------------------------------------------------
+      - name: Export Android environment variables
+        run: |
+          echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Verify environment
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
+          ls -la "$ANDROID_NDK_ROOT" | head -n 20
+          ls -la "$ANDROID_HOME/platforms"
+          ls -la "$ANDROID_HOME/build-tools"
+
+      # ---------------------------------------------------------------
+      # 5. Configure with CMake (NDK toolchain file)
+      # ---------------------------------------------------------------
+      - name: Configure CMake
+        run: |
+          cmake -S server -B build 
+
+      # ---------------------------------------------------------------
+      # 6. Build
+      # ---------------------------------------------------------------
+      - name: Build
+        run: cmake --build build -j
+
+      # ---------------------------------------------------------------
+      # 7. Collect release files produced under build/keystored
+      # ---------------------------------------------------------------
+      - name: Prepare release output
+        run: |
+          mkdir -p release
+          if [ -d build/keystored ]; then
+            cp -r build/keystored/* release/ || true
+          else
+            echo "::warning::build/keystored was not created by the build"
+          fi
+          echo "--- release contents ---"
+          find release -type f -print
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: release/
+          if-no-files-found: warn
+
+      # ---------------------------------------------------------------
+      # 8. Publish a GitHub Release (only when a tag is pushed)
+      # ---------------------------------------------------------------
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: release/**
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

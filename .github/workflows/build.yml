@@ -92,8 +92,8 @@ jobs:
       - name: Prepare release output
         run: |
           mkdir -p release
-          if [ -d build/keystored ]; then
-            cp -r build/keystored/* release/ || true
+          if [ -d build/keystorkd ]; then
+            cp -r build/keystorkd release/ || true
           else
             echo "::warning::build/keystored was not created by the build"
           fi

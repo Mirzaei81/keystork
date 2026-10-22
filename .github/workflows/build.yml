@@ -92,11 +92,8 @@ jobs:
       - name: Prepare release output
         run: |
           mkdir -p release
-          if [ -d build/keystorkd ]; then
-            cp -r build/keystorkd release/ || true
-          else
-            echo "::warning::build/keystored was not created by the build"
-          fi
+          find ./build -type f -exec file {} + | awk -F: '/ELF/{print $1}' | xargs -r -I{} cp -- {} release/
+          ls ./build
           echo "--- release contents ---"
           find release -type f -print
 
